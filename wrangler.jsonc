@@ -1,0 +1,46 @@
+{
+  // Realtime Worker — Generalized WebSocket Hub
+  // Provides realtime event delivery via Durable Objects + Cloudflare Queues.
+  // Any app in the ecosystem can bind to this worker via Service Binding RPC.
+
+  "name": "realtime-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-03",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Durable Object: RealtimeHub with SQLite storage (Rule 7.4.4)
+  "durable_objects": {
+    "bindings": [
+      { "name": "REALTIME_HUB", "class_name": "RealtimeHub" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RealtimeHub"] }
+  ],
+
+  // Service Bindings
+  "services": [
+    { "binding": "SSO_SERVICE", "service": "sso-api" }
+  ],
+
+  // Cloudflare Queue: produces events from DOs, consumes for fan-out
+  "queues": {
+    "producers": [
+      { "queue": "realtime-events-queue", "binding": "REALTIME_EVENTS_QUEUE" }
+    ],
+    "consumers": [
+      {
+        "queue": "realtime-events-queue",
+        "max_batch_size": 100,
+        "max_batch_timeout": 1
+      }
+    ]
+  },
+
+  // Observability: Full logging + traces (Rule 7.8)
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.01 }
+  }
+}
