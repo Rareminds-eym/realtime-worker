@@ -3,7 +3,7 @@
   // Provides realtime event delivery via Durable Objects + Cloudflare Queues.
   // Any app in the ecosystem can bind to this worker via Service Binding RPC.
 
-  "name": "realtime-worker",
+  "name": "realtime-worker-dev",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-03",
   "compatibility_flags": ["nodejs_compat"],
@@ -20,21 +20,137 @@
 
   // Service Bindings
   "services": [
-    { "binding": "SSO_SERVICE", "service": "sso-api" }
+    { "binding": "SSO_SERVICE", "service": "sso-api-dev" }
   ],
 
   // Cloudflare Queue: produces events from DOs, consumes for fan-out
   "queues": {
     "producers": [
-      { "queue": "realtime-events-queue", "binding": "REALTIME_EVENTS_QUEUE" }
+      { "queue": "realtime-events-queue-dev", "binding": "REALTIME_EVENTS_QUEUE" }
     ],
     "consumers": [
       {
-        "queue": "realtime-events-queue",
+        "queue": "realtime-events-queue-dev",
         "max_batch_size": 100,
         "max_batch_timeout": 1
       }
     ]
+  },
+
+  // ==========================================================================
+  // DEV — wrangler deploy (default, no --env flag)
+  // Deploys as: realtime-worker-dev
+  // ==========================================================================
+
+  "vars": {
+    "ENVIRONMENT": "dev"
+  },
+
+  // ==========================================================================
+  // STAGING — wrangler deploy --env staging
+  // Deploys as: realtime-worker-staging
+  // ==========================================================================
+
+  "env": {
+    "staging": {
+      "name": "realtime-worker-staging",
+      "durable_objects": {
+        "bindings": [
+          { "name": "REALTIME_HUB", "class_name": "RealtimeHub" }
+        ]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["RealtimeHub"] }
+      ],
+      "vars": {
+        "ENVIRONMENT": "staging"
+      },
+      "services": [
+        { "binding": "SSO_SERVICE", "service": "sso-api-staging" }
+      ],
+      "queues": {
+        "producers": [
+          { "queue": "realtime-events-queue-staging", "binding": "REALTIME_EVENTS_QUEUE" }
+        ],
+        "consumers": [
+          {
+            "queue": "realtime-events-queue-staging",
+            "max_batch_size": 100,
+            "max_batch_timeout": 1
+          }
+        ]
+      }
+    },
+
+    // ========================================================================
+    // DEMO — wrangler deploy --env demo
+    // Deploys as: realtime-worker-demo
+    // ========================================================================
+
+    "demo": {
+      "name": "realtime-worker-demo",
+      "durable_objects": {
+        "bindings": [
+          { "name": "REALTIME_HUB", "class_name": "RealtimeHub" }
+        ]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["RealtimeHub"] }
+      ],
+      "vars": {
+        "ENVIRONMENT": "demo"
+      },
+      "services": [
+        { "binding": "SSO_SERVICE", "service": "sso-api-demo" }
+      ],
+      "queues": {
+        "producers": [
+          { "queue": "realtime-events-queue-demo", "binding": "REALTIME_EVENTS_QUEUE" }
+        ],
+        "consumers": [
+          {
+            "queue": "realtime-events-queue-demo",
+            "max_batch_size": 100,
+            "max_batch_timeout": 1
+          }
+        ]
+      }
+    },
+
+    // ========================================================================
+    // PRODUCTION — wrangler deploy --env production
+    // Deploys as: realtime-worker-production
+    // ========================================================================
+
+    "production": {
+      "name": "realtime-worker-production",
+      "durable_objects": {
+        "bindings": [
+          { "name": "REALTIME_HUB", "class_name": "RealtimeHub" }
+        ]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["RealtimeHub"] }
+      ],
+      "vars": {
+        "ENVIRONMENT": "production"
+      },
+      "services": [
+        { "binding": "SSO_SERVICE", "service": "sso-api-production" }
+      ],
+      "queues": {
+        "producers": [
+          { "queue": "realtime-events-queue", "binding": "REALTIME_EVENTS_QUEUE" }
+        ],
+        "consumers": [
+          {
+            "queue": "realtime-events-queue",
+            "max_batch_size": 100,
+            "max_batch_timeout": 1
+          }
+        ]
+      }
+    }
   },
 
   // Observability: Full logging + traces (Rule 7.8)

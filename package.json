@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "wrangler dev --port 8790",
     "deploy": "wrangler deploy",
+    "deploy:production": "wrangler deploy --env production",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:demo": "wrangler deploy --env demo",
     "types": "wrangler types",
     "test": "vitest",
     "test:run": "vitest run",
