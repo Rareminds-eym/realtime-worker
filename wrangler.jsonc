@@ -20,7 +20,7 @@
 
   // Service Bindings
   "services": [
-    { "binding": "SSO_SERVICE", "service": "sso-api" }
+    { "binding": "SSO_SERVICE", "service": "sso-api", "entrypoint": "SsoWorker" }
   ],
 
   // Cloudflare Queue: produces events from DOs, consumes for fan-out
