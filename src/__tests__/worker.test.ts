@@ -137,24 +137,27 @@ describe('Worker Queue Consumer', () => {
     const calls = publishBatchMock.mock.calls;
     expect(calls.length).toBe(TOTAL_PARTITIONS);
     
-    // Check what was sent to partition 0
-    expect(mockEnv.REALTIME_HUB.idFromName).toHaveBeenNthCalledWith(1, 'partition-0');
-    expect(calls[0][0].length).toBe(2);
-    expect(calls[0][0][0].event.type).toBe('EVENT_A');
-    expect(calls[0][0][1].event.type).toBe('EVENT_B');
+    // Collect (partitionName, events[]) pairs (order is insertion-order from Map)
+    const nameCalls = mockEnv.REALTIME_HUB.idFromName.mock.calls.map((c: any) => c[0]);
+    
+    // Partition 0 must be called and get both A and B
+    const p0Idx = nameCalls.indexOf('partition-0');
+    expect(calls[p0Idx][0].length).toBe(2);
+    expect(calls[p0Idx][0][0].event.type).toBe('EVENT_A');
+    expect(calls[p0Idx][0][1].event.type).toBe('EVENT_B');
+    
+    // Partition 1 must get only B
+    const p1Idx = nameCalls.indexOf('partition-1');
+    expect(calls[p1Idx][0].length).toBe(1);
+    expect(calls[p1Idx][0][0].event.type).toBe('EVENT_B');
+    
+    // Partition 2 must get only A
+    const p2Idx = nameCalls.indexOf('partition-2');
+    expect(calls[p2Idx][0].length).toBe(1);
+    expect(calls[p2Idx][0][0].event.type).toBe('EVENT_A');
     
     // Check that msg.ack was called for both
     expect(batch.messages[0].ack).toHaveBeenCalled();
     expect(batch.messages[1].ack).toHaveBeenCalled();
-    
-    // Check partition 1
-    expect(mockEnv.REALTIME_HUB.idFromName).toHaveBeenNthCalledWith(2, 'partition-1');
-    expect(calls[1][0].length).toBe(1);
-    expect(calls[1][0][0].type).toBe('EVENT_B');
-    
-    // Check partition 2
-    expect(mockEnv.REALTIME_HUB.idFromName).toHaveBeenNthCalledWith(3, 'partition-2');
-    expect(calls[2][0].length).toBe(1);
-    expect(calls[2][0][0].type).toBe('EVENT_A');
   });
 });

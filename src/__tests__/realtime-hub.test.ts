@@ -90,9 +90,11 @@ describe('RealtimeHub', () => {
     websockets.push(mockWs);
 
     const event = {
-      table: 'messages',
-      type: 'INSERT',
-      payload: { id: 1, text: 'hello' },
+      event: {
+        table: 'messages',
+        type: 'INSERT',
+        payload: { id: 1, text: 'hello' },
+      },
     };
 
     await hub.publishBatch([event as any]);
@@ -117,10 +119,12 @@ describe('RealtimeHub', () => {
   it('can process heartbeat events and sync presence', async () => {
     // Mock the heartbeat call inside publishBatch
     const event = {
-      type: '__INTERNAL_WS_PRESENCE_HEARTBEAT',
-      channel: 'test-channel',
-      userId: 'user-1',
-      status: 'away',
+      event: {
+        type: '__INTERNAL_WS_PRESENCE_HEARTBEAT',
+        channel: 'test-channel',
+        userId: 'user-1',
+        status: 'away',
+      },
     };
 
     execMock.mockImplementation((sql: string) => {
@@ -177,9 +181,11 @@ describe('RealtimeHub', () => {
     });
     
     await hub.publishBatch([{
-      type: '__INTERNAL_WS_PRESENCE_HEARTBEAT',
-      channel: 'test-channel',
-      userId: 'user-1'
+      event: {
+        type: '__INTERNAL_WS_PRESENCE_HEARTBEAT',
+        channel: 'test-channel',
+        userId: 'user-1',
+      },
     }] as any);
 
     expect(execMock).toHaveBeenCalledWith(

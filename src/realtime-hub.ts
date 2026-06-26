@@ -107,7 +107,10 @@ export class RealtimeHub extends DurableObject<Env> {
    * @param events - Array of realtime events to process
    */
   async publishBatch(events: Record<string, unknown>[]): Promise<void> {
-    for (const event of events) {
+    for (const msg of events) {
+      // All Queue messages wrap payload under `event` key
+      const event = msg.event as Record<string, unknown>;
+      if (!event) continue;
       const eventType = event.type as string;
 
       switch (eventType) {
