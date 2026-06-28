@@ -45,11 +45,11 @@ describe('getPartitionId', () => {
       counts[partition]++;
     }
 
-    // Each partition should get roughly 10% (100 users) — allow 50% deviation
+    // Each partition should get roughly 10% (100 users) — allow 40% deviation (60-140 range)
     const expectedPerPartition = numUsers / TOTAL_PARTITIONS;
     for (let i = 0; i < TOTAL_PARTITIONS; i++) {
-      expect(counts[i]).toBeGreaterThan(expectedPerPartition * 0.3);
-      expect(counts[i]).toBeLessThan(expectedPerPartition * 2.5);
+      expect(counts[i]).toBeGreaterThan(expectedPerPartition * 0.6);
+      expect(counts[i]).toBeLessThan(expectedPerPartition * 1.4);
     }
   });
 

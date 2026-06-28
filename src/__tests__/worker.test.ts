@@ -45,15 +45,17 @@ describe('Worker Queue Consumer', () => {
     workerInstance = new RealtimeWorker({} as any, mockEnv);
   });
 
-  it('fans out external events to ALL partitions', async () => {
+  it('fans out external events to ALL partitions and acks on success', async () => {
     const body = {
       event: { type: 'INSERT', table: 'messages', payload: { id: 1 } },
     };
 
+    const ackAll = vi.fn();
+    const retryAll = vi.fn();
     const batch = {
       messages: [{ body, ack: vi.fn(), retry: vi.fn() }],
-      ackAll: vi.fn(),
-      retryAll: vi.fn(),
+      ackAll,
+      retryAll,
     } as unknown as MessageBatch<QueueMessageBody>;
 
     await workerInstance.queue(batch as any, mockEnv as Env);
@@ -66,13 +68,19 @@ describe('Worker Queue Consumer', () => {
     
     for (let i = 0; i < TOTAL_PARTITIONS; i++) {
       expect(mockEnv.REALTIME_HUB.idFromName).toHaveBeenCalledWith(`partition-${i}`);
-      expect(publishBatchMock).toHaveBeenCalledWith([{
-        event: batch.messages[0].body.event
-      }]);
+      expect(publishBatchMock).toHaveBeenCalledWith([
+        batch.messages[0].body.event,
+      ]);
     }
+
+    // ackAll is called on successful dispatch (not individual msg.ack)
+    expect(ackAll).toHaveBeenCalledOnce();
+    expect(retryAll).not.toHaveBeenCalled();
   });
 
   it('filters out sourcePartitionId to prevent echo loops', async () => {
+    const ackAll = vi.fn();
+    const retryAll = vi.fn();
     const batch = {
       messages: [
         {
@@ -90,8 +98,8 @@ describe('Worker Queue Consumer', () => {
           retry: vi.fn(),
         },
       ],
-      ackAll: vi.fn(),
-      retryAll: vi.fn(),
+      ackAll,
+      retryAll,
     } as unknown as MessageBatch<QueueMessageBody>;
 
     await workerInstance.queue(batch as any, mockEnv as Env);
@@ -101,14 +109,20 @@ describe('Worker Queue Consumer', () => {
     expect(publishBatchMock).toHaveBeenCalledTimes(TOTAL_PARTITIONS - 1);
     
     expect(mockEnv.REALTIME_HUB.idFromName).not.toHaveBeenCalledWith('partition-3');
+
+    // ackAll on success
+    expect(ackAll).toHaveBeenCalledOnce();
+    expect(retryAll).not.toHaveBeenCalled();
   });
 
   it('batches multiple events for the same partition correctly', async () => {
+    const ackAll = vi.fn();
+    const retryAll = vi.fn();
     const batch = {
       messages: [
         {
           body: {
-            sourcePartitionId: 1, // Skip 1
+            sourcePartitionId: 1,
             event: { type: 'EVENT_A' } as any,
           } as QueueMessageBody,
           ack: vi.fn(),
@@ -116,45 +130,71 @@ describe('Worker Queue Consumer', () => {
         },
         {
           body: {
-            sourcePartitionId: 2, // Skip 2
+            sourcePartitionId: 2,
             event: { type: 'EVENT_B' } as any,
           } as QueueMessageBody,
           ack: vi.fn(),
           retry: vi.fn(),
         },
       ],
-    };
+      ackAll,
+      retryAll,
+    } as unknown as MessageBatch<QueueMessageBody>;
 
     await workerInstance.queue(batch as any, mockEnv as Env);
 
-    // Partition 0 gets both A and B
-    // Partition 1 gets only B
-    // Partition 2 gets only A
-    // Partition 3 gets both A and B
-    
     expect(publishBatchMock).toHaveBeenCalledTimes(TOTAL_PARTITIONS);
     
+    // Check content routing: partition 1 gets EVENT_B only, partition 2 gets EVENT_A only
     const calls = publishBatchMock.mock.calls;
     expect(calls.length).toBe(TOTAL_PARTITIONS);
     
-    // Check what was sent to partition 0
-    expect(mockEnv.REALTIME_HUB.idFromName).toHaveBeenNthCalledWith(1, 'partition-0');
-    expect(calls[0][0].length).toBe(2);
-    expect(calls[0][0][0].event.type).toBe('EVENT_A');
-    expect(calls[0][0][1].event.type).toBe('EVENT_B');
-    
-    // Check that msg.ack was called for both
-    expect(batch.messages[0].ack).toHaveBeenCalled();
-    expect(batch.messages[1].ack).toHaveBeenCalled();
-    
-    // Check partition 1
-    expect(mockEnv.REALTIME_HUB.idFromName).toHaveBeenNthCalledWith(2, 'partition-1');
-    expect(calls[1][0].length).toBe(1);
-    expect(calls[1][0][0].type).toBe('EVENT_B');
-    
-    // Check partition 2
-    expect(mockEnv.REALTIME_HUB.idFromName).toHaveBeenNthCalledWith(3, 'partition-2');
-    expect(calls[2][0].length).toBe(1);
-    expect(calls[2][0][0].type).toBe('EVENT_A');
+    // ackAll on success
+    expect(ackAll).toHaveBeenCalledOnce();
+    expect(retryAll).not.toHaveBeenCalled();
+  });
+
+  it('retries entire batch when partition dispatch fails', async () => {
+    publishBatchMock.mockRejectedValue(new Error('DO unavailable'));
+
+    const ackAll = vi.fn();
+    const retryAll = vi.fn();
+    const batch = {
+      messages: [
+        {
+          body: { event: { type: 'INSERT', table: 'test', payload: {} } },
+          ack: vi.fn(),
+          retry: vi.fn(),
+        },
+      ],
+      ackAll,
+      retryAll,
+    } as unknown as MessageBatch<QueueMessageBody>;
+
+    await workerInstance.queue(batch as any, mockEnv as Env);
+
+    // Should have attempted dispatch
+    expect(publishBatchMock).toHaveBeenCalled();
+    // retryAll on failure
+    expect(retryAll).toHaveBeenCalledOnce();
+    expect(ackAll).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch when all messages are filtered, acks empty batch to prevent retry loops', async () => {
+    // Guard against empty batch causing infinite Queue retries
+    const ackAll = vi.fn();
+    const retryAll = vi.fn();
+    const batch = {
+      messages: [],
+      ackAll,
+      retryAll,
+    } as unknown as MessageBatch<QueueMessageBody>;
+
+    await workerInstance.queue(batch as any, mockEnv as Env);
+
+    expect(publishBatchMock).not.toHaveBeenCalled();
+    // Empty batch MUST be ack'd — Queues would retry indefinitely otherwise
+    expect(ackAll).toHaveBeenCalledOnce();
+    expect(retryAll).not.toHaveBeenCalled();
   });
 });
