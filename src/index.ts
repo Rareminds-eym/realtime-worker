@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-export { RealtimeHub } from './realtime-hub';
 import { QueueMessageBody } from './realtime-hub';
+export { RealtimeHub } from './realtime-hub';
 export type { QueueMessageBody };
 
 import { getPartitionId, TOTAL_PARTITIONS } from './utils';
@@ -9,27 +9,15 @@ export default class RealtimeWorker extends WorkerEntrypoint<Env> {
   declare env: Env;
 
   /**
-   * Returns a DO stub Fetcher capability for the user's partition.
-   * The Pages function calls fetcher.fetch() directly to establish
-   * the WebSocket connection, avoiding the WebSocket serialization
-   * issue across service binding boundaries.
-   */
-  async getWebSocketFetcher(userId: string): Promise<Fetcher> {
-    const partitionId = getPartitionId(userId);
-    const id = this.env.REALTIME_HUB.idFromName(`partition-${partitionId}`);
-    return this.env.REALTIME_HUB.get(id);
-  }
-
-  /**
    * WebSocket upgrade handler — used in local dev where the frontend
    * connects directly to ws://localhost:8790, bypassing Pages Functions.
    *
    * Extracts JWT from Sec-WebSocket-Protocol, verifies via SSO,
    * then proxies the upgrade to the DO stub (same partition logic
-   * as the production Capability Passing path).
+   * as the production direct DO binding path).
    *
-   * In production this handler is unused — Pages calls
-   * getWebSocketFetcher RPC instead.
+   * In production, Pages Functions bind directly to REALTIME_HUB
+   * and call the DO stub via the Durable Object binding.
    */
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get('Upgrade') !== 'websocket') {
