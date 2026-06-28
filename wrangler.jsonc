@@ -5,7 +5,7 @@
 
   "name": "realtime-worker",
   "main": "src/index.ts",
-  "compatibility_date": "2026-06-03",
+  "compatibility_date": "2026-06-08",
   "compatibility_flags": ["nodejs_compat"],
 
   // Durable Object: RealtimeHub with SQLite storage (Rule 7.4.4)

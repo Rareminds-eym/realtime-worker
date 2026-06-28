@@ -12,8 +12,6 @@ vi.mock('cloudflare:workers', () => ({
 }));
 
 import { RealtimeHub } from '../realtime-hub';
-import type { QueueMessageBody } from '../index';
-import type { DurableObjectState, DurableObjectStorage } from '@cloudflare/workers-types';
 
 describe('RealtimeHub', () => {
   let mockEnv: any;
@@ -25,7 +23,7 @@ describe('RealtimeHub', () => {
   let hub: RealtimeHub;
 
   beforeEach(() => {
-    execMock = vi.fn().mockImplementation((sql) => {
+    execMock = vi.fn().mockImplementation((_sql: string) => {
       // Return a mock cursor that is both iterable and has toArray()
       const arr: any[] = [];
       (arr as any).toArray = () => [];
@@ -49,7 +47,7 @@ describe('RealtimeHub', () => {
         },
       },
       getWebSockets: vi.fn(() => websockets),
-      acceptWebSocket: vi.fn((ws, tags) => {
+      acceptWebSocket: vi.fn((ws, _tags) => {
         websockets.push(ws);
       }),
     };

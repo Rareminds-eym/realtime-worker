@@ -108,36 +108,43 @@ export class RealtimeHub extends DurableObject<Env> {
    */
   async publishBatch(events: Record<string, unknown>[]): Promise<void> {
     for (const event of events) {
-      const eventType = event.type as string;
+      const eventType = typeof event.type === 'string' ? event.type : '';
 
       switch (eventType) {
-        case '__INTERNAL_WS_BROADCAST':
-          this.broadcastChannel(
-            event.channel as string,
-            event.eventType as string,
-            event.payload,
-            event.from as string
-          );
+        case '__INTERNAL_WS_BROADCAST': {
+          const channel = typeof event.channel === 'string' ? event.channel : '';
+          const eventTypeStr = typeof event.eventType === 'string' ? event.eventType : '';
+          const from = typeof event.from === 'string' ? event.from : '';
+          if (!channel) break;
+          this.broadcastChannel(channel, eventTypeStr, event.payload, from);
           break;
+        }
 
-        case '__INTERNAL_WS_PRESENCE_JOIN':
-          this.sqlJoinPresence(event.channel as string, event.info as PresenceInfo);
-          this.syncPresence(event.channel as string);
+        case '__INTERNAL_WS_PRESENCE_JOIN': {
+          const channel = typeof event.channel === 'string' ? event.channel : '';
+          if (!channel) break;
+          this.sqlJoinPresence(channel, event.info as PresenceInfo);
+          this.syncPresence(channel);
           break;
+        }
 
-        case '__INTERNAL_WS_PRESENCE_LEAVE':
-          this.sqlLeavePresence(event.channel as string, event.userId as string);
-          this.syncPresence(event.channel as string);
+        case '__INTERNAL_WS_PRESENCE_LEAVE': {
+          const channel = typeof event.channel === 'string' ? event.channel : '';
+          const userId = typeof event.userId === 'string' ? event.userId : '';
+          if (!channel || !userId) break;
+          this.sqlLeavePresence(channel, userId);
+          this.syncPresence(channel);
           break;
+        }
 
-        case '__INTERNAL_WS_PRESENCE_HEARTBEAT':
-          this.sqlUpdateHeartbeat(
-            event.channel as string,
-            event.userId as string,
-            event.status as string | undefined
-          );
-          this.syncPresence(event.channel as string);
+        case '__INTERNAL_WS_PRESENCE_HEARTBEAT': {
+          const channel = typeof event.channel === 'string' ? event.channel : '';
+          const userId = typeof event.userId === 'string' ? event.userId : '';
+          if (!channel || !userId) break;
+          this.sqlUpdateHeartbeat(channel, userId, event.status as string | undefined);
+          this.syncPresence(channel);
           break;
+        }
 
         default:
           // Database change events from notifyRealtime()
@@ -197,8 +204,10 @@ export class RealtimeHub extends DurableObject<Env> {
         if (payloadBase64) {
           // Fix base64 padding and decode
           const base64 = payloadBase64.replace(/-/g, '+').replace(/_/g, '/');
+          // Restore padding stripped by base64url (RFC 4648 §5)
+          const padded = base64.padEnd(base64.length + (4 - base64.length % 4) % 4, '=');
           const jsonPayload = decodeURIComponent(
-            atob(base64)
+            atob(padded)
               .split('')
               .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
               .join('')
@@ -210,7 +219,10 @@ export class RealtimeHub extends DurableObject<Env> {
         }
       }
     } catch (e) {
-      console.warn('[RealtimeHub] JWT decode failed inside DO', e);
+      console.warn(JSON.stringify({
+        message: '[RealtimeHub] JWT decode failed inside DO',
+        error: String(e),
+      }));
     }
     this.partitionId = getPartitionId(userId);
 
@@ -223,6 +235,13 @@ export class RealtimeHub extends DurableObject<Env> {
     }
 
     const wsId = crypto.randomUUID();
+
+    console.log(JSON.stringify({
+      message: 'WebSocket accepted by DO',
+      userId,
+      partitionId: this.partitionId,
+      wsId,
+    }));
 
     // Enable Hibernation API — DO can be evicted between messages
     this.ctx.acceptWebSocket(server);
@@ -240,20 +259,17 @@ export class RealtimeHub extends DurableObject<Env> {
     // Respond with the selected subprotocol. The browser requires a
     // Sec-WebSocket-Protocol response header matching one of the requested
     // protocols, otherwise it may close the connection.
+    // Conditionally set per RFC 6455 §4.2.2: only echo if the client offered one.
     const requestedProtocols = request.headers.get('Sec-WebSocket-Protocol');
     const responseHeaders: Record<string, string> = {};
     if (requestedProtocols) {
-      // Echo back 'access_token' — the first protocol the client offered.
-      // This tells the browser we accepted its subprotocol negotiation.
       responseHeaders['Sec-WebSocket-Protocol'] = 'access_token';
     }
 
     return new Response(null, {
       status: 101,
       webSocket: client,
-      headers: {
-        'Sec-WebSocket-Protocol': 'access_token'
-      }
+      headers: responseHeaders,
     });
   }
 
@@ -262,7 +278,7 @@ export class RealtimeHub extends DurableObject<Env> {
    * Called by Hibernation API — DO may have been evicted and re-constructed
    * since the last message, so all state must be read from SQLite/attachments.
    */
-  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+  webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
     if (typeof message !== 'string') return; // Binary messages not supported
 
     let data: Record<string, unknown>;
@@ -273,7 +289,12 @@ export class RealtimeHub extends DurableObject<Env> {
       return;
     }
 
-    const attachment = ws.deserializeAttachment() as WsAttachment;
+    const raw = ws.deserializeAttachment();
+    if (!raw) {
+      console.warn(JSON.stringify({ message: 'WebSocket has no attachment, skipping message' }));
+      return;
+    }
+    const attachment = raw as WsAttachment;
 
     // Restore partitionId from attachment (may have been lost during hibernation)
     this.partitionId = attachment.partitionId;
@@ -311,8 +332,13 @@ export class RealtimeHub extends DurableObject<Env> {
    * Handles WebSocket close events.
    * Cleans up subscriptions and presence for the disconnected user.
    */
-  async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
-    const attachment = ws.deserializeAttachment() as WsAttachment;
+  webSocketClose(ws: WebSocket, _code: number, _reason: string, _wasClean: boolean): void {
+    const raw = ws.deserializeAttachment();
+    if (!raw) {
+      console.warn(JSON.stringify({ message: 'WebSocket has no attachment on close' }));
+      return;
+    }
+    const attachment = raw as WsAttachment;
     this.partitionId = attachment.partitionId;
 
     // Clean up all subscriptions for this WebSocket
@@ -340,6 +366,11 @@ export class RealtimeHub extends DurableObject<Env> {
           channel,
           userId: attachment.userId,
         },
+      }).catch((err: unknown) => {
+        console.error(JSON.stringify({
+          message: 'Queue send failed (close cleanup)',
+          error: String(err),
+        }));
       });
     }
   }
@@ -347,12 +378,13 @@ export class RealtimeHub extends DurableObject<Env> {
   /**
    * Handles WebSocket errors. Delegates to close handler for cleanup.
    */
-  async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+  webSocketError(_ws: WebSocket, error: unknown): void {
     console.error(JSON.stringify({
       message: 'WebSocket error',
       error: String(error),
     }));
-    await this.webSocketClose(ws, 1011, 'WebSocket error', false);
+    // webSocketClose is called by the Hibernation API runtime — no need to delegate
+    // Duplicate cleanup of subscriptions/presence would cause undefined behavior.
   }
 
   // ─── Action Handlers ──────────────────────────────────────────────────────
@@ -396,6 +428,11 @@ export class RealtimeHub extends DurableObject<Env> {
         payload: data.payload,
         from: userId,
       },
+    }).catch((err: unknown) => {
+      console.error(JSON.stringify({
+        message: 'Queue send failed (broadcast)',
+        error: String(err),
+      }));
     });
   }
 
@@ -425,6 +462,11 @@ export class RealtimeHub extends DurableObject<Env> {
         channel: data.channel,
         info,
       },
+    }).catch((err: unknown) => {
+      console.error(JSON.stringify({
+        message: 'Queue send failed (presence join)',
+        error: String(err),
+      }));
     });
   }
 
@@ -448,6 +490,11 @@ export class RealtimeHub extends DurableObject<Env> {
         userId,
         status: data.status,
       },
+    }).catch((err: unknown) => {
+      console.error(JSON.stringify({
+        message: 'Queue send failed (heartbeat)',
+        error: String(err),
+      }));
     });
   }
 
@@ -465,6 +512,11 @@ export class RealtimeHub extends DurableObject<Env> {
         channel: data.channel,
         userId,
       },
+    }).catch((err: unknown) => {
+      console.error(JSON.stringify({
+        message: 'Queue send failed (presence leave)',
+        error: String(err),
+      }));
     });
   }
 
@@ -629,12 +681,9 @@ export class RealtimeHub extends DurableObject<Env> {
     const wsMap = new Map<string, WebSocket>();
 
     for (const ws of activeSockets) {
-      try {
-        const att = ws.deserializeAttachment() as WsAttachment;
-        wsMap.set(att.wsId, ws);
-      } catch {
-        // Attachment deserialization may fail for corrupt connections — skip
-      }
+      const raw = ws.deserializeAttachment();
+      if (!raw) continue;
+      wsMap.set((raw as WsAttachment).wsId, ws);
     }
 
     for (const row of cursor) {
@@ -648,8 +697,8 @@ export class RealtimeHub extends DurableObject<Env> {
           const raw = filter.substring(eqIdx + 1);
           // Handle filters like "collegeId=eq.abc" → extract "abc"
           const cleanVal = raw.includes('.') ? raw.split('.')[1] : raw;
-          // eslint-disable-next-line eqeqeq
-          if (col && cleanVal && payload[col] != cleanVal) continue;
+          // URL query params arrive as strings, payload values may be numbers — coerce comparison is intentional.
+          if (col && cleanVal && String(payload[col]) != cleanVal) continue;
         }
       }
 
