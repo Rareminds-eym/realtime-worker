@@ -17,5 +17,5 @@ export function getPartitionId(userId: string): number {
   for (let i = 0; i < userId.length; i++) {
     hash = (Math.imul(31, hash) + userId.charCodeAt(i)) | 0;
   }
-  return Math.abs(hash) % TOTAL_PARTITIONS;
+  return (hash >>> 0) % TOTAL_PARTITIONS;
 }
