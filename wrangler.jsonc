@@ -20,7 +20,7 @@
 
   // Service Bindings
   "services": [
-    { "binding": "SSO_SERVICE", "service": "sso-api" }
+    { "binding": "SSO_SERVICE", "service": "sso-api", "entrypoint": "SsoWorker" }
   ],
 
   // Cloudflare Queue: produces events from DOs, consumes for fan-out
@@ -38,6 +38,10 @@
   },
 
   // Observability: Full logging + traces (Rule 7.8)
+  "dev": {
+    "port": 8790
+  },
+
   "observability": {
     "enabled": true,
     "logs": { "head_sampling_rate": 1 },
