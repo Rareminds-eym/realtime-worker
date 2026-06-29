@@ -12,13 +12,14 @@
  *   Therefore:
  *   - Subscriptions are stored in SQLite (survive hibernation).
  *   - Presence state is stored in SQLite (survive hibernation).
- *   - Per-WebSocket metadata is stored via serializeAttachment (survive hibernation).
+ *   - Per-WebSocket metadata is stored via serializeAttachment (survives hibernation).
  *   - The only in-memory state is `partitionId`, which is restored from
  *     WebSocket attachments on every handler invocation.
  *
  * @see https://developers.cloudflare.com/durable-objects/api/websockets/
  */
 import { DurableObject } from 'cloudflare:workers';
+import type { Env } from './env';
 import { getPartitionId } from './utils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -43,6 +44,7 @@ interface PresenceInfo {
 /** Internal event types for cross-partition communication via Queue. */
 export type InternalEventType =
   | '__INTERNAL_WS_BROADCAST'
+  | '__INTERNAL_MAINTENANCE_UPDATE'
   | '__INTERNAL_WS_PRESENCE_JOIN'
   | '__INTERNAL_WS_PRESENCE_LEAVE'
   | '__INTERNAL_WS_PRESENCE_HEARTBEAT';
@@ -120,6 +122,14 @@ export class RealtimeHub extends DurableObject<Env> {
           break;
         }
 
+        case '__INTERNAL_MAINTENANCE_UPDATE': {
+          const action = typeof event.action === 'string' ? event.action : '';
+          const data = event.data as Record<string, unknown>;
+          if (!action) break;
+          await this.handleMaintenanceUpdate(action, data);
+          break;
+        }
+
         case '__INTERNAL_WS_PRESENCE_JOIN': {
           const channel = typeof event.channel === 'string' ? event.channel : '';
           if (!channel) break;
@@ -154,19 +164,19 @@ export class RealtimeHub extends DurableObject<Env> {
   }
 
   // ─── RPC Methods ──────────────────────────────────────────────────────────
-  
+
   async getStats(): Promise<Record<string, unknown>> {
     let connections = 0;
     try {
       connections = this.ctx.getWebSockets().length;
-    } catch {}
+    } catch { }
 
     let presences = 0;
     try {
       const cursor = this.ctx.storage.sql.exec('SELECT COUNT(*) as count FROM presence');
       const res = [...cursor].pop();
       presences = (res?.count as number) || 0;
-    } catch {}
+    } catch { }
 
     return {
       partitionId: this.partitionId,
@@ -710,6 +720,53 @@ export class RealtimeHub extends DurableObject<Env> {
           // WebSocket may have been closed between query and send — safe to ignore
         }
       }
+    }
+  }
+
+  // ─── Maintenance Mode Handler ───────────────────────────────────────────────
+
+  /**
+   * Handles maintenance mode updates from the sp-dash Pages Function.
+   * Calls the skillpassport API via HTTP to update the database and broadcasts to clients.
+   *
+   * @param action - The maintenance action (toggle, bypass_token)
+   * @param data - The action data (enabled, token, etc.)
+   */
+  private async handleMaintenanceUpdate(action: string, data: Record<string, unknown>): Promise<void> {
+    try {
+      const skillpassportUrl = this.env.SKILLPASSPORT_URL;
+      const internalSecret = this.env.INTERNAL_WEBHOOK_SECRET;
+
+      if (!skillpassportUrl || !internalSecret) {
+        console.error('[RealtimeHub] Skillpassport URL or internal secret not configured for maintenance updates');
+        return;
+      }
+
+      // Call skillpassport API to handle the database update
+      const skillpassportResponse = await fetch(`${skillpassportUrl}/api/internal/maintenance/update`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${internalSecret}`,
+        },
+        body: JSON.stringify({ action, data }),
+      });
+
+      if (!skillpassportResponse.ok) {
+        console.error('[RealtimeHub] Skillpassport API call failed:', skillpassportResponse.status);
+        return;
+      }
+
+      // Broadcast to all clients after successful update
+      if (action === 'toggle') {
+        const enabled = data.enabled === true;
+        this.broadcastChannel('maintenance-config-updates', 'update', { key: 'maintenance_mode', value: enabled ? 'true' : 'false' }, 'realtime-worker');
+      } else if (action === 'bypass_token') {
+        const token = data.token as string | null;
+        this.broadcastChannel('maintenance-config-updates', 'update', { key: 'maintenance_bypass_token', value: token }, 'realtime-worker');
+      }
+    } catch (error) {
+      console.error('[RealtimeHub] Error handling maintenance update:', error);
     }
   }
 }

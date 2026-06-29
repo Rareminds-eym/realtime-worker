@@ -1,0 +1,22 @@
+name = "realtime-worker"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+main = "src/index.ts"
+
+[[durable_objects.bindings]]
+name = "REALTIME_HUB"
+class_name = "RealtimeHub"
+script_name = "realtime-worker"
+
+[[queues.consumers]]
+queue = "realtime-events-queue"
+max_batch_size = 10
+max_wait_time = 5
+
+[vars]
+# Skillpassport URL for HTTP calls
+SKILLPASSPORT_URL = "https://skillpassport.rareminds.com"
+
+# Required secrets (set via wrangler secret):
+# - INTERNAL_WEBHOOK_SECRET (shared with skillpassport for authentication)
