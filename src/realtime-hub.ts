@@ -734,30 +734,6 @@ export class RealtimeHub extends DurableObject<Env> {
    */
   private async handleMaintenanceUpdate(action: string, data: Record<string, unknown>): Promise<void> {
     try {
-      const skillpassportUrl = this.env.SKILLPASSPORT_URL;
-      const internalSecret = this.env.INTERNAL_WEBHOOK_SECRET;
-
-      if (!skillpassportUrl || !internalSecret) {
-        console.error('[RealtimeHub] Skillpassport URL or internal secret not configured for maintenance updates');
-        return;
-      }
-
-      // Call skillpassport API to handle the database update
-      const skillpassportResponse = await fetch(`${skillpassportUrl}/api/internal/maintenance/update`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${internalSecret}`,
-        },
-        body: JSON.stringify({ action, data }),
-      });
-
-      if (!skillpassportResponse.ok) {
-        console.error('[RealtimeHub] Skillpassport API call failed:', skillpassportResponse.status);
-        return;
-      }
-
-      // Broadcast to all clients after successful update
       if (action === 'toggle') {
         const enabled = data.enabled === true;
         this.broadcastChannel('maintenance-config-updates', 'update', { key: 'maintenance_mode', value: enabled ? 'true' : 'false' }, 'realtime-worker');

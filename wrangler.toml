@@ -15,8 +15,4 @@ max_batch_size = 10
 max_wait_time = 5
 
 [vars]
-# Skillpassport URL for HTTP calls
-SKILLPASSPORT_URL = "https://skillpassport.rareminds.com"
-
-# Required secrets (set via wrangler secret):
-# - INTERNAL_WEBHOOK_SECRET (shared with skillpassport for authentication)
+# No additional vars required

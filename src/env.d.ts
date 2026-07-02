@@ -10,10 +10,4 @@ export interface Env {
 
   // Service bindings
   SSO_SERVICE: any;
-
-  // Skillpassport API URL for HTTP calls
-  SKILLPASSPORT_URL?: string;
-
-  // Internal webhook secret for service-to-service authentication
-  INTERNAL_WEBHOOK_SECRET?: string;
 }
