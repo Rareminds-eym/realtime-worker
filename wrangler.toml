@@ -16,3 +16,28 @@ max_wait_time = 5
 
 [vars]
 # No additional vars required
+
+# ============================================================================
+# DEVELOPMENT -> wrangler deploy --env dev
+# ============================================================================
+
+[env.dev]
+name = "realtime-worker-dev"
+
+[[env.dev.durable_objects.bindings]]
+name = "REALTIME_HUB"
+class_name = "RealtimeHub"
+script_name = "realtime-worker-dev"
+
+[[env.dev.migrations]]
+tag = "v1"
+new_sqlite_classes = ["RealtimeHub"]
+
+[[env.dev.queues.producers]]
+binding = "REALTIME_EVENTS_QUEUE"
+queue = "realtime-events-queue-dev"
+
+[[env.dev.queues.consumers]]
+queue = "realtime-events-queue-dev"
+max_batch_size = 10
+max_wait_time = 5
