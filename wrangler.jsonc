@@ -49,6 +49,33 @@
   },
 
   "env": {
+    "qa": {
+      "name": "realtime-worker-qa",
+      "account_id": "d10c2b1a3d702c710a036bc5a6d0902e",
+      "durable_objects": {
+        "bindings": [
+          { "name": "REALTIME_HUB", "class_name": "RealtimeHub" }
+        ]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["RealtimeHub"] }
+      ],
+      "services": [
+        { "binding": "SSO_SERVICE", "service": "sso-api-qa", "entrypoint": "SsoWorker" }
+      ],
+      "queues": {
+        "producers": [
+          { "queue": "realtime-events-queue-qa", "binding": "REALTIME_EVENTS_QUEUE" }
+        ],
+        "consumers": [
+          {
+            "queue": "realtime-events-queue-qa",
+            "max_batch_size": 100,
+            "max_batch_timeout": 1
+          }
+        ]
+      }
+    },
     "dev": {
       "name": "realtime-worker-dev",
       "durable_objects": {

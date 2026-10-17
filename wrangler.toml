@@ -41,3 +41,34 @@ queue = "realtime-events-queue-dev"
 queue = "realtime-events-queue-dev"
 max_batch_size = 10
 max_wait_time = 5
+
+# ============================================================================
+# QA -> wrangler deploy --config wrangler.toml --env qa
+# Requires sso-api-qa to be deployed first.
+# ============================================================================
+
+[env.qa]
+name = "realtime-worker-qa"
+account_id = "d10c2b1a3d702c710a036bc5a6d0902e"
+
+[[env.qa.durable_objects.bindings]]
+name = "REALTIME_HUB"
+class_name = "RealtimeHub"
+
+[[env.qa.migrations]]
+tag = "v1"
+new_sqlite_classes = ["RealtimeHub"]
+
+[[env.qa.services]]
+binding = "SSO_SERVICE"
+service = "sso-api-qa"
+entrypoint = "SsoWorker"
+
+[[env.qa.queues.producers]]
+binding = "REALTIME_EVENTS_QUEUE"
+queue = "realtime-events-queue-qa"
+
+[[env.qa.queues.consumers]]
+queue = "realtime-events-queue-qa"
+max_batch_size = 100
+max_batch_timeout = 1
