@@ -21,6 +21,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from './env';
 import { getPartitionId } from './utils';
+import { ConnectionTickets } from './connection-tickets';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -98,6 +99,13 @@ export class RealtimeHub extends DurableObject<Env> {
         )
       `);
     });
+  }
+
+  async issueConnectionTicket(userId:string):Promise<{ticket:string;expiresAt:number}> {
+    return new ConnectionTickets(this.ctx.storage).issue(userId);
+  }
+  async alarm():Promise<void> {
+    await new ConnectionTickets(this.ctx.storage).cleanup();
   }
 
   // ─── RPC Method (called by Queue Consumer via Worker) ─────────────────────
@@ -196,18 +204,18 @@ export class RealtimeHub extends DurableObject<Env> {
       return new Response('Not found', { status: 404 });
     }
 
-    const pair = new WebSocketPair();
-    const [client, server] = Object.values(pair);
-
     // Extract JWT from protocols
     const protocols = request.headers.get('Sec-WebSocket-Protocol') || '';
     const parts = protocols.split(',').map(p => p.trim());
     const tokenIndex = parts.indexOf('access_token');
     const token = tokenIndex !== -1 && tokenIndex < parts.length - 1 ? parts[tokenIndex + 1] : '';
 
-    let userId = 'unknown';
+    const ticketIndex = parts.indexOf('connection_ticket');
+    const ticketUser = ticketIndex !== -1 ? await new ConnectionTickets(this.ctx.storage).consume(parts[ticketIndex+1] || '') : null;
+    if (ticketIndex !== -1 && !ticketUser) return new Response('Invalid or expired connection ticket', {status:401});
+    let userId: string = ticketUser || 'unknown';
     try {
-      if (token) {
+      if (ticketIndex === -1 && token) {
         // The token is already verified by the proxy in index.ts.
         // We just need to decode the payload to extract the userId.
         const payloadBase64 = token.split('.')[1];
@@ -223,7 +231,7 @@ export class RealtimeHub extends DurableObject<Env> {
               .join('')
           );
           const payload = JSON.parse(jsonPayload);
-          if (payload.sub) {
+          if (typeof payload.sub === 'string') {
             userId = payload.sub;
           }
         }
@@ -236,13 +244,9 @@ export class RealtimeHub extends DurableObject<Env> {
     }
     this.partitionId = getPartitionId(userId);
 
-    if (userId === 'unknown') {
-      server.close(1008, 'Unauthorized');
-      return new Response(null, {
-        status: 101,
-        webSocket: client,
-      });
-    }
+    if (userId === 'unknown') return new Response('Unauthorized', {status:401});
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
 
     const wsId = crypto.randomUUID();
 
@@ -273,7 +277,7 @@ export class RealtimeHub extends DurableObject<Env> {
     const requestedProtocols = request.headers.get('Sec-WebSocket-Protocol');
     const responseHeaders: Record<string, string> = {};
     if (requestedProtocols) {
-      responseHeaders['Sec-WebSocket-Protocol'] = 'access_token';
+      responseHeaders['Sec-WebSocket-Protocol'] = ticketIndex !== -1 ? 'connection_ticket' : 'access_token';
     }
 
     return new Response(null, {
