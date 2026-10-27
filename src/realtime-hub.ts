@@ -12,14 +12,16 @@
  *   Therefore:
  *   - Subscriptions are stored in SQLite (survive hibernation).
  *   - Presence state is stored in SQLite (survive hibernation).
- *   - Per-WebSocket metadata is stored via serializeAttachment (survive hibernation).
+ *   - Per-WebSocket metadata is stored via serializeAttachment (survives hibernation).
  *   - The only in-memory state is `partitionId`, which is restored from
  *     WebSocket attachments on every handler invocation.
  *
  * @see https://developers.cloudflare.com/durable-objects/api/websockets/
  */
 import { DurableObject } from 'cloudflare:workers';
+import type { Env } from './env';
 import { getPartitionId } from './utils';
+import { ConnectionTickets } from './connection-tickets';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,6 +45,7 @@ interface PresenceInfo {
 /** Internal event types for cross-partition communication via Queue. */
 export type InternalEventType =
   | '__INTERNAL_WS_BROADCAST'
+  | '__INTERNAL_MAINTENANCE_UPDATE'
   | '__INTERNAL_WS_PRESENCE_JOIN'
   | '__INTERNAL_WS_PRESENCE_LEAVE'
   | '__INTERNAL_WS_PRESENCE_HEARTBEAT';
@@ -98,6 +101,13 @@ export class RealtimeHub extends DurableObject<Env> {
     });
   }
 
+  async issueConnectionTicket(userId:string):Promise<{ticket:string;expiresAt:number}> {
+    return new ConnectionTickets(this.ctx.storage).issue(userId);
+  }
+  async alarm():Promise<void> {
+    await new ConnectionTickets(this.ctx.storage).cleanup();
+  }
+
   // ─── RPC Method (called by Queue Consumer via Worker) ─────────────────────
 
   /**
@@ -117,6 +127,14 @@ export class RealtimeHub extends DurableObject<Env> {
           const from = typeof event.from === 'string' ? event.from : '';
           if (!channel) break;
           this.broadcastChannel(channel, eventTypeStr, event.payload, from);
+          break;
+        }
+
+        case '__INTERNAL_MAINTENANCE_UPDATE': {
+          const action = typeof event.action === 'string' ? event.action : '';
+          const data = event.data as Record<string, unknown>;
+          if (!action) break;
+          await this.handleMaintenanceUpdate(action, data);
           break;
         }
 
@@ -154,19 +172,19 @@ export class RealtimeHub extends DurableObject<Env> {
   }
 
   // ─── RPC Methods ──────────────────────────────────────────────────────────
-  
+
   async getStats(): Promise<Record<string, unknown>> {
     let connections = 0;
     try {
       connections = this.ctx.getWebSockets().length;
-    } catch {}
+    } catch { }
 
     let presences = 0;
     try {
       const cursor = this.ctx.storage.sql.exec('SELECT COUNT(*) as count FROM presence');
       const res = [...cursor].pop();
       presences = (res?.count as number) || 0;
-    } catch {}
+    } catch { }
 
     return {
       partitionId: this.partitionId,
@@ -186,18 +204,18 @@ export class RealtimeHub extends DurableObject<Env> {
       return new Response('Not found', { status: 404 });
     }
 
-    const pair = new WebSocketPair();
-    const [client, server] = Object.values(pair);
-
     // Extract JWT from protocols
     const protocols = request.headers.get('Sec-WebSocket-Protocol') || '';
     const parts = protocols.split(',').map(p => p.trim());
     const tokenIndex = parts.indexOf('access_token');
     const token = tokenIndex !== -1 && tokenIndex < parts.length - 1 ? parts[tokenIndex + 1] : '';
 
-    let userId = 'unknown';
+    const ticketIndex = parts.indexOf('connection_ticket');
+    const ticketUser = ticketIndex !== -1 ? await new ConnectionTickets(this.ctx.storage).consume(parts[ticketIndex+1] || '') : null;
+    if (ticketIndex !== -1 && !ticketUser) return new Response('Invalid or expired connection ticket', {status:401});
+    let userId: string = ticketUser || 'unknown';
     try {
-      if (token) {
+      if (ticketIndex === -1 && token) {
         // The token is already verified by the proxy in index.ts.
         // We just need to decode the payload to extract the userId.
         const payloadBase64 = token.split('.')[1];
@@ -213,7 +231,7 @@ export class RealtimeHub extends DurableObject<Env> {
               .join('')
           );
           const payload = JSON.parse(jsonPayload);
-          if (payload.sub) {
+          if (typeof payload.sub === 'string') {
             userId = payload.sub;
           }
         }
@@ -226,13 +244,9 @@ export class RealtimeHub extends DurableObject<Env> {
     }
     this.partitionId = getPartitionId(userId);
 
-    if (userId === 'unknown') {
-      server.close(1008, 'Unauthorized');
-      return new Response(null, {
-        status: 101,
-        webSocket: client,
-      });
-    }
+    if (userId === 'unknown') return new Response('Unauthorized', {status:401});
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
 
     const wsId = crypto.randomUUID();
 
@@ -263,7 +277,7 @@ export class RealtimeHub extends DurableObject<Env> {
     const requestedProtocols = request.headers.get('Sec-WebSocket-Protocol');
     const responseHeaders: Record<string, string> = {};
     if (requestedProtocols) {
-      responseHeaders['Sec-WebSocket-Protocol'] = 'access_token';
+      responseHeaders['Sec-WebSocket-Protocol'] = ticketIndex !== -1 ? 'connection_ticket' : 'access_token';
     }
 
     return new Response(null, {
@@ -710,6 +724,29 @@ export class RealtimeHub extends DurableObject<Env> {
           // WebSocket may have been closed between query and send — safe to ignore
         }
       }
+    }
+  }
+
+  // ─── Maintenance Mode Handler ───────────────────────────────────────────────
+
+  /**
+   * Handles maintenance mode updates from the sp-dash Pages Function.
+   * Calls the skillpassport API via HTTP to update the database and broadcasts to clients.
+   *
+   * @param action - The maintenance action (toggle, bypass_token)
+   * @param data - The action data (enabled, token, etc.)
+   */
+  private async handleMaintenanceUpdate(action: string, data: Record<string, unknown>): Promise<void> {
+    try {
+      if (action === 'toggle') {
+        const enabled = data.enabled === true;
+        this.broadcastChannel('maintenance-config-updates', 'update', { key: 'maintenance_mode', value: enabled ? 'true' : 'false' }, 'realtime-worker');
+      } else if (action === 'bypass_token') {
+        const token = data.token as string | null;
+        this.broadcastChannel('maintenance-config-updates', 'update', { key: 'maintenance_bypass_token', value: token }, 'realtime-worker');
+      }
+    } catch (error) {
+      console.error('[RealtimeHub] Error handling maintenance update:', error);
     }
   }
 }
