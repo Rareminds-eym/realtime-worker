@@ -4,15 +4,24 @@ export { RealtimeHub } from './realtime-hub';
 export type { QueueMessageBody };
 
 import { getPartitionId, TOTAL_PARTITIONS } from './utils';
+import { ticketPartition } from './connection-tickets';
 
 export default class RealtimeWorker extends WorkerEntrypoint<Env> {
   declare env: Env;
+
+  async issueConnectionTicket(userId: string): Promise<{ticket:string;expiresAt:number}> {
+    if (!/^[a-f0-9-]{36}$/i.test(userId)) throw new Error('INVALID_USER');
+    const id = this.env.REALTIME_HUB.idFromName(`partition-${getPartitionId(userId)}`);
+    const stub = this.env.REALTIME_HUB.get(id) as unknown as {issueConnectionTicket(userId:string):Promise<{ticket:string;expiresAt:number}>};
+    return stub.issueConnectionTicket(userId);
+  }
 
   /**
    * WebSocket upgrade handler — used in local dev where the frontend
    * connects directly to ws://localhost:8790, bypassing Pages Functions.
    *
-   * Extracts JWT from Sec-WebSocket-Protocol, verifies via SSO,
+   * Routes single-use tickets for atomic validation in the hub, or
+   * verifies legacy JWT subprotocol credentials through SSO,
    * then proxies the upgrade to the DO stub (same partition logic
    * as the production direct DO binding path).
    *
@@ -28,6 +37,13 @@ export default class RealtimeWorker extends WorkerEntrypoint<Env> {
       // Extract JWT from Sec-WebSocket-Protocol header
       const protocols = request.headers.get('Sec-WebSocket-Protocol') || '';
       const parts = protocols.split(',').map(p => p.trim());
+      const ticketIndex = parts.indexOf('connection_ticket');
+      if (ticketIndex !== -1) {
+        const partition = ticketPartition(parts[ticketIndex + 1] || '');
+        if (partition === null) return new Response('Invalid connection ticket', {status:401});
+        const id = this.env.REALTIME_HUB.idFromName(`partition-${partition}`);
+        return this.env.REALTIME_HUB.get(id).fetch(new Request('http://do/connect', {headers:request.headers}));
+      }
       const tokenIndex = parts.indexOf('access_token');
       const token = tokenIndex !== -1 && tokenIndex < parts.length - 1 ? parts[tokenIndex + 1] : '';
 
