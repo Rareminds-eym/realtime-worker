@@ -25,11 +25,11 @@ Cloudflare Queues drive the internal server-to-server pub/sub network.
 
 ## Development & Production Variances
 
-### Miniflare Service Binding Limitation
-Cloudflare Pages edge functions perfectly proxy WebSockets over Service Bindings (`env.REALTIME_WORKER.fetch()`) in production without any modifications. 
-However, the local Miniflare emulator attempts to serialize WebSocket Upgrade Responses as JSON across workers, resulting in `Unexpected end of JSON input` or `Broken pipe` crashes. 
+### Realtime routing in local and deployed environments
 
-**Solution:** In the frontend's `wsRealtimeClient.ts`, if Vite runs in `import.meta.env.DEV` mode (on `localhost:8788`), it bypasses the Pages proxy entirely and connects directly to the underlying `realtime-worker` running on port `8790`. This ensures seamless local testing while preserving the robust Pages proxy architecture for production.
+The browser requests a short-lived single-use ticket from `/api/realtime-ticket`, then connects to `/api/realtime-stream` on the same origin. Pages routes the upgrade directly to `REALTIME_HUB`; it does not proxy the WebSocket response through a worker service binding. This also works when realtime runs as an auxiliary worker in `sso-worker`'s combined `dev:stack`, which has no standalone port 8790.
+
+For an explicitly standalone local realtime server, set `VITE_REALTIME_WS_PORT` to its listening port before building the frontend. Without that override, the same-origin route is used. Both the default and named dev configurations declare `RealtimeHub` with `new_sqlite_classes`, and the owning worker binds its own class without `script_name`. External consumers continue using the worker's script name.
 
 ### SSO JWT Validation
 The system relies on RS256 asymmetric signatures managed exclusively by the `sso-worker`. Old dependencies on symmetric keys (like `SUPABASE_JWT_SECRET` or `HS256` fallbacks) have been completely removed across the ecosystem, enforcing a strict zero-trust boundary.

@@ -46,5 +46,34 @@
     "enabled": true,
     "logs": { "head_sampling_rate": 1 },
     "traces": { "enabled": true, "head_sampling_rate": 0.01 }
+  },
+
+  "env": {
+    "dev": {
+      "name": "realtime-worker-dev",
+      "durable_objects": {
+        "bindings": [
+          { "name": "REALTIME_HUB", "class_name": "RealtimeHub" }
+        ]
+      },
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["RealtimeHub"] }
+      ],
+      "services": [
+        { "binding": "SSO_SERVICE", "service": "sso-api-dev", "entrypoint": "SsoWorker" }
+      ],
+      "queues": {
+        "producers": [
+          { "queue": "realtime-events-queue-dev", "binding": "REALTIME_EVENTS_QUEUE" }
+        ],
+        "consumers": [
+          {
+            "queue": "realtime-events-queue-dev",
+            "max_batch_size": 100,
+            "max_batch_timeout": 1
+          }
+        ]
+      }
+    }
   }
 }
