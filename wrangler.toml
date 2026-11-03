@@ -1,0 +1,47 @@
+name = "realtime-worker"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+main = "src/index.ts"
+
+# RealtimeHub uses the SQL API in its constructor. The default/local stack
+# needs the same SQLite class declaration as the named dev environment.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RealtimeHub"]
+
+[[durable_objects.bindings]]
+name = "REALTIME_HUB"
+class_name = "RealtimeHub"
+
+[[queues.consumers]]
+queue = "realtime-events-queue"
+max_batch_size = 10
+max_wait_time = 5
+
+[vars]
+# No additional vars required
+
+# ============================================================================
+# DEVELOPMENT -> wrangler deploy --env dev
+# ============================================================================
+
+[env.dev]
+name = "realtime-worker-dev"
+
+[[env.dev.durable_objects.bindings]]
+name = "REALTIME_HUB"
+class_name = "RealtimeHub"
+
+[[env.dev.migrations]]
+tag = "v1"
+new_sqlite_classes = ["RealtimeHub"]
+
+[[env.dev.queues.producers]]
+binding = "REALTIME_EVENTS_QUEUE"
+queue = "realtime-events-queue-dev"
+
+[[env.dev.queues.consumers]]
+queue = "realtime-events-queue-dev"
+max_batch_size = 10
+max_wait_time = 5
