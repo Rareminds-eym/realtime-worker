@@ -17,7 +17,7 @@ class_name = "RealtimeHub"
 [[queues.consumers]]
 queue = "realtime-events-queue"
 max_batch_size = 10
-max_wait_time = 5
+max_batch_timeout = 5
 
 [vars]
 # No additional vars required
@@ -44,7 +44,7 @@ queue = "realtime-events-queue-dev"
 [[env.dev.queues.consumers]]
 queue = "realtime-events-queue-dev"
 max_batch_size = 10
-max_wait_time = 5
+max_batch_timeout = 5
 
 # ============================================================================
 # QA -> wrangler deploy --config wrangler.toml --env qa
